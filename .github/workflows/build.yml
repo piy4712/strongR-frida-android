@@ -153,12 +153,28 @@ jobs:
     - name: Package arm64 outputs
       shell: bash
       run: |
-        pushd frida
-        xz -T0 build/frida-android-arm64/bin/frida-server
-        xz -T0 build/frida-android-arm64/bin/frida-inject
-        xz -T0 build/frida-android-arm64/lib/frida/64/frida-gadget.so
-        popd
-        ls -la frida/build/frida-android-arm64/bin/*.xz frida/build/frida-android-arm64/lib/frida/64/*.xz
+        set +e
+        BD=frida/build/frida-android-arm64
+        echo "=== locate built outputs ==="
+        SERVER=$(find "$BD/subprojects/frida-core/server" -maxdepth 1 -type f -name 'frida-server' ! -name '*.*' 2>/dev/null | head -1)
+        INJECT=$(find "$BD/subprojects/frida-core/inject" -maxdepth 1 -type f -name 'frida-inject' ! -name '*.*' 2>/dev/null | head -1)
+        GADGET=$(find "$BD/subprojects/frida-core/lib/gadget" -maxdepth 1 -type f -name 'frida-gadget' ! -name '*.*' 2>/dev/null | head -1)
+        echo "server: ${SERVER:-NOT FOUND}"
+        echo "inject: ${INJECT:-NOT FOUND}"
+        echo "gadget: ${GADGET:-NOT FOUND}"
+        # stage into a clean dist dir matching the expected layout
+        mkdir -p dist/bin dist/lib/frida/64
+        [ -n "$SERVER" ] && cp "$SERVER" dist/bin/frida-server
+        [ -n "$INJECT" ] && cp "$INJECT" dist/bin/frida-inject
+        [ -n "$GADGET" ] && cp "$GADGET" dist/lib/frida/64/frida-gadget.so
+        echo "=== staged dist ==="
+        ls -la dist/bin dist/lib/frida/64
+        echo "=== xz ==="
+        xz -T0 dist/bin/frida-server dist/bin/frida-inject dist/lib/frida/64/frida-gadget.so
+        ls -la dist/bin/*.xz dist/lib/frida/64/*.xz
+        # fail only if frida-server missing (the one we actually need)
+        [ -f dist/bin/frida-server.xz ] || { echo "ERROR: frida-server not built"; exit 1; }
+        exit 0
 
     - name: Upload hluda-server artifact
       uses: actions/upload-artifact@v4
@@ -166,6 +182,6 @@ jobs:
         name: hluda-android-arm64-${{ inputs.frida_version }}
         retention-days: 30
         path: |
-          frida/build/frida-android-arm64/bin/frida-server.xz
-          frida/build/frida-android-arm64/bin/frida-inject.xz
-          frida/build/frida-android-arm64/lib/frida/64/frida-gadget.so.xz
+          dist/bin/frida-server.xz
+          dist/bin/frida-inject.xz
+          dist/lib/frida/64/frida-gadget.so.xz
