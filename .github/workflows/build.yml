@@ -1,14 +1,18 @@
 name: strongR-frida-build
 
 # Build hluda-server (strongR-frida patched) for android-arm64 on GitHub Actions.
-# Fork of CrackerCat/strongR-frida-android, rewritten to:
-#  - pin a Frida version (no latest, no release/secret deps)
-#  - clone public hluwa/Patchs (no PATCH_REPO secret)
-#  - drop the frida-gum `git am` step whose empty glob hung `git am` on stdin
-#  - only build arm64
-#  - upload via actions/upload-artifact (upload-release-asset was removed by GitHub)
 #
-# Trigger manually: gh workflow run build.yml -f frida_version=17.11.0
+# This is a port of hluwa/strongR-frida (2021, Frida 15) to Frida 17.x. The
+# original .patch files no longer `git am` cleanly because Frida 17 refactored:
+#   - embed-agent.sh -> embed-agent.py (Python)
+#   - fifo-based linjector -> memfd-based (0003 no longer applies)
+#   - gmain is GLib locale data, not a Frida thread name (0007 unnecessary)
+#
+# Instead of git am, strongr_port.py applies the equivalent detection-string
+# changes directly to the checked-out source. patch_agent.py (lief + sed) is
+# hooked into embed-agent.py to patch each built agent .so before it is packed.
+#
+# Trigger: gh workflow run build.yml -f frida_version=17.11.0
 
 on:
   workflow_dispatch:
@@ -63,13 +67,6 @@ jobs:
         sudo gem install fpm -v 1.11.0 --no-document
         python3 -m pip install lief graphlib
 
-    - name: Clone hluwa/Patchs (public, no secret)
-      shell: bash
-      run: |
-        git clone --depth 1 https://github.com/hluwa/Patchs Patchs
-        echo "=== core patches present ==="
-        ls -1 Patchs/strongR-frida/frida-core/*.patch
-
     - name: Clone Frida at pinned tag + submodules
       shell: bash
       run: |
@@ -78,23 +75,46 @@ jobs:
         VER="${{ inputs.frida_version }}"
         git clone https://github.com/frida/frida frida
         cd frida
-        # checkout the release tag, then sync submodules to that tag
         git checkout "$VER" 2>/dev/null || git checkout "tags/$VER"
         git submodule update --init --recursive
-        echo "=== frida checked out at: $(git describe --tags 2>/dev/null || git rev-parse --short HEAD) ==="
+        echo "=== frida at: $(git describe --tags 2>/dev/null || git rev-parse --short HEAD) ==="
+        echo "=== frida-core at: $(cd subprojects/frida-core && git describe --tags 2>/dev/null) ==="
+        echo "=== frida-gum at: $(cd subprojects/frida-gum && git describe --tags 2>/dev/null) ==="
 
-    - name: Apply strongR-frida core patches (with 3way fallback)
+    - name: Apply strongR source patches (port to 17.x)
+      shell: bash
+      run: |
+        cp strongr_port.py frida/strongr_port.py
+        cp patch_agent.py frida/patch_agent.py
+        cd frida
+        python3 strongr_port.py
+        echo "=== verify patches landed ==="
+        grep -n "Base64.decode" subprojects/frida-core/lib/base/rpc.vala | head
+        grep -n "Uuid.string_random" subprojects/frida-core/server/server.vala | head
+        grep -rn "frida-agent" subprojects/frida-core/src/linux/linux-host-session.vala | head
+        grep -n "gum-js-loop" subprojects/frida-gum/bindings/gumjs/gumscriptscheduler.c || echo "gum-js-loop replaced OK"
+
+    - name: Hook patch_agent.py into embed-agent.py
       shell: bash
       run: |
         cd frida/subprojects/frida-core
-        # detached HEAD in a submodule is fine for `git am`
-        if git am --3way ../../../Patchs/strongR-frida/frida-core/*.patch; then
-          echo "=== git am applied cleanly ==="
-        else
-          echo "=== git am failed, aborting and retrying with git apply --3way ==="
-          git am --abort 2>/dev/null || true
-          git apply --3way ../../../Patchs/strongR-frida/frida-core/*.patch && echo "=== git apply OK ==="
-        fi
+        # Insert a call to patch_agent.py right after each shutil.copy(agent, embedded_agent)
+        # in the linux/android branch, before the resource_compiler packs them.
+        python3 - <<'PY'
+        from pathlib import Path
+        p = Path("src/embed-agent.py")
+        s = p.read_text()
+        anchor = '            shutil.copy(agent, embedded_agent)'
+        hook = (
+            '            shutil.copy(agent, embedded_agent)\n'
+            '            import subprocess as _sp; _sp.run(["python3", "../../../../patch_agent.py", str(embedded_agent)], check=False)'
+        )
+        if anchor not in s:
+            raise SystemExit("anchor shutil.copy(agent, embedded_agent) not found in embed-agent.py")
+        s = s.replace(anchor, hook, 1)
+        p.write_text(s)
+        print("hooked patch_agent.py into embed-agent.py (linux/android branch)")
+        PY
 
     - name: Configure
       shell: bash
@@ -105,6 +125,19 @@ jobs:
 
     - name: Compile
       run: make
+
+    - name: Verify agent was patched (symbol check)
+      shell: bash
+      run: |
+        # The built agent .so should NOT export frida_agent_main / any frida* symbol.
+        AGENT=$(find frida/build/frida-android-arm64 -name 'frida-agent-64.so' -o -name 'frida-agent.so' 2>/dev/null | head -1)
+        echo "agent: ${AGENT:-not found}"
+        if [ -n "$AGENT" ]; then
+          echo "=== exported symbols containing frida/gum/FRIDA ==="
+          nm -D "$AGENT" 2>/dev/null | grep -iE "frida|gum" | head -20 || echo "NONE (good)"
+          echo "=== rodata strings containing frida/gum-js-loop ==="
+          strings "$AGENT" | grep -iE "frida|gum-js-loop|gmain" | head -20 || echo "NONE (good)"
+        fi
 
     - name: Package arm64 outputs
       shell: bash
