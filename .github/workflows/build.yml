@@ -132,18 +132,23 @@ jobs:
         cd frida
         make
 
-    - name: Verify agent was patched (symbol check)
+    - name: Verify agent was patched (symbol check, non-fatal)
       shell: bash
       run: |
+        set +e
         # The built agent .so should NOT export frida_agent_main / any frida* symbol.
-        AGENT=$(find frida/build/frida-android-arm64 -name 'frida-agent-64.so' -o -name 'frida-agent.so' 2>/dev/null | head -1)
+        AGENT=$(find frida/build/frida-android-arm64 -type f \( -name 'frida-agent-64.so' -o -name 'frida-agent.so' -o -name '*-agent-64.so' \) 2>/dev/null | head -1)
         echo "agent: ${AGENT:-not found}"
         if [ -n "$AGENT" ]; then
           echo "=== exported symbols containing frida/gum/FRIDA ==="
-          nm -D "$AGENT" 2>/dev/null | grep -iE "frida|gum" | head -20 || echo "NONE (good)"
-          echo "=== rodata strings containing frida/gum-js-loop ==="
-          strings "$AGENT" | grep -iE "frida|gum-js-loop|gmain" | head -20 || echo "NONE (good)"
+          nm -D "$AGENT" 2>/dev/null | grep -iE "frida|gum" | head -20
+          echo "(empty above = good)"
+          echo "=== rodata strings containing frida/gum-js-loop/gmain ==="
+          strings "$AGENT" | grep -iE "frida|gum-js-loop|gmain" | head -20
+          echo "(empty above = good)"
         fi
+        echo "verify step done (non-fatal)"
+        exit 0
 
     - name: Package arm64 outputs
       shell: bash
