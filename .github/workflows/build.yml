@@ -126,7 +126,11 @@ jobs:
         ./configure --host=android-${{ matrix.arch }} --enable-portal -- -Dfrida-gum:devkits=gum,gumjs -Dfrida-core:devkits=core
 
     - name: Compile
-      run: make
+      shell: bash
+      run: |
+        export ANDROID_NDK_ROOT=${{ steps.setup-ndk.outputs.ndk-path }}
+        cd frida
+        make
 
     - name: Verify agent was patched (symbol check)
       shell: bash
