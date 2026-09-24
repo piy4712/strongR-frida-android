@@ -137,7 +137,7 @@ jobs:
       run: |
         set +e
         # The built agent .so should NOT export frida_agent_main / any frida* symbol.
-        AGENT=$(find frida/build/frida-android-arm64 -type f \( -name 'frida-agent-64.so' -o -name 'frida-agent.so' -o -name '*-agent-64.so' \) 2>/dev/null | head -1)
+        AGENT=$(find frida/build -type f \( -name 'frida-agent-64.so' -o -name 'frida-agent.so' -o -name '*-agent-64.so' -o -name 'libfrida-agent*.so' \) 2>/dev/null | head -1)
         echo "agent: ${AGENT:-not found}"
         if [ -n "$AGENT" ]; then
           echo "=== exported symbols containing frida/gum/FRIDA ==="
@@ -154,14 +154,21 @@ jobs:
       shell: bash
       run: |
         set +e
-        BD=frida/build/frida-android-arm64
-        echo "=== locate built outputs ==="
+        # Frida 17 meson builds directly in frida/build (cross via cross-file,
+        # no per-host subdir). Outputs live under subprojects/frida-core/...
+        BD=frida/build
+        echo "=== locate built outputs under $BD ==="
         SERVER=$(find "$BD/subprojects/frida-core/server" -maxdepth 1 -type f -name 'frida-server' ! -name '*.*' 2>/dev/null | head -1)
         INJECT=$(find "$BD/subprojects/frida-core/inject" -maxdepth 1 -type f -name 'frida-inject' ! -name '*.*' 2>/dev/null | head -1)
         GADGET=$(find "$BD/subprojects/frida-core/lib/gadget" -maxdepth 1 -type f -name 'frida-gadget' ! -name '*.*' 2>/dev/null | head -1)
         echo "server: ${SERVER:-NOT FOUND}"
         echo "inject: ${INJECT:-NOT FOUND}"
         echo "gadget: ${GADGET:-NOT FOUND}"
+        # fallback: search whole build tree
+        [ -z "$SERVER" ] && SERVER=$(find "$BD" -type f -name 'frida-server' ! -name '*.*' 2>/dev/null | grep -E 'server/frida-server$' | head -1)
+        [ -z "$INJECT" ] && INJECT=$(find "$BD" -type f -name 'frida-inject' ! -name '*.*' 2>/dev/null | grep -E 'inject/frida-inject$' | head -1)
+        [ -z "$GADGET" ] && GADGET=$(find "$BD" -type f -name 'frida-gadget' ! -name '*.*' 2>/dev/null | grep -E 'gadget/frida-gadget$' | head -1)
+        echo "after fallback -> server: ${SERVER:-NOT FOUND} | inject: ${INJECT:-NOT FOUND} | gadget: ${GADGET:-NOT FOUND}"
         # stage into a clean dist dir matching the expected layout
         mkdir -p dist/bin dist/lib/frida/64
         [ -n "$SERVER" ] && cp "$SERVER" dist/bin/frida-server
@@ -170,10 +177,10 @@ jobs:
         echo "=== staged dist ==="
         ls -la dist/bin dist/lib/frida/64
         echo "=== xz ==="
-        xz -T0 dist/bin/frida-server dist/bin/frida-inject dist/lib/frida/64/frida-gadget.so
-        ls -la dist/bin/*.xz dist/lib/frida/64/*.xz
+        xz -T0 dist/bin/frida-server dist/bin/frida-inject dist/lib/frida/64/frida-gadget.so 2>/dev/null || true
+        ls -la dist/bin/*.xz dist/lib/frida/64/*.xz 2>/dev/null
         # fail only if frida-server missing (the one we actually need)
-        [ -f dist/bin/frida-server.xz ] || { echo "ERROR: frida-server not built"; exit 1; }
+        [ -f dist/bin/frida-server.xz ] || { echo "ERROR: frida-server not built/found"; find "$BD" -name 'frida-server*' 2>/dev/null | head; exit 1; }
         exit 0
 
     - name: Upload hluda-server artifact
