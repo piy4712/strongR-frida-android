@@ -91,8 +91,13 @@ jobs:
         echo "=== verify patches landed (old detection strings must be GONE) ==="
         ! grep -q '"frida:rpc"' subprojects/frida-core/lib/base/rpc.vala || { echo "rpc: frida:rpc still present"; exit 1; }
         ! grep -q 're.frida.server' subprojects/frida-core/server/server.vala || { echo "server: re.frida.server still present"; exit 1; }
-        ! grep -rq 'frida-agent' subprojects/frida-core/src/linux/linux-host-session.vala || { echo "agent name: frida-agent still present"; exit 1; }
+        ! grep -rq 'frida-agent' subprojects/frida-core/src/linux/linux-host-session.vala || { echo "agent name: frida-agent still present in linux-host-session"; exit 1; }
         ! grep -q 'gum-js-loop' subprojects/frida-gum/bindings/gumjs/gumscriptscheduler.c || { echo "gum-js-loop still present"; exit 1; }
+        ! grep -q '"frida-agent-emulated"' subprojects/frida-core/lib/agent/agent.vala || { echo "frida-agent-emulated thread name still present"; exit 1; }
+        ! grep -q '"frida-eternal-agent"' subprojects/frida-core/lib/agent/agent.vala || { echo "frida-eternal-agent thread name still present"; exit 1; }
+        ! grep -q '"frida-agent-container"' subprojects/frida-core/src/agent-container.vala || { echo "frida-agent-container thread name still present"; exit 1; }
+        ! grep -q 'refused to load frida-agent' subprojects/frida-core/src/host-session-service.vala || { echo "host-session-service msg still present"; exit 1; }
+        ! grep -q '"frida-main-loop"' subprojects/frida-core/src/frida-glue.c || { echo "frida-main-loop thread name still present"; exit 1; }
         echo "all source patches verified OK"
 
     - name: Hook patch_agent.py into embed-agent.py
@@ -101,6 +106,9 @@ jobs:
         cd frida/subprojects/frida-core
         # Insert a call to patch_agent.py right after each shutil.copy(agent, embedded_agent)
         # in the linux/android branch, before the resource_compiler packs them.
+        # Resolve the patcher by __file__ (absolute) — meson runs embed-agent.py with a
+        # build-dir cwd, so a relative path would silently miss and check=False would hide it.
+        cp ../../../patch_agent.py src/patch_agent.py
         python3 - <<'PY'
         from pathlib import Path
         p = Path("src/embed-agent.py")
@@ -108,13 +116,13 @@ jobs:
         anchor = '            shutil.copy(agent, embedded_agent)'
         hook = (
             '            shutil.copy(agent, embedded_agent)\n'
-            '            import subprocess as _sp; _sp.run(["python3", "../../../../patch_agent.py", str(embedded_agent)], check=False)'
+            '            import subprocess as _sp, sys as _sys; _r=_sp.run([_sys.executable, str(Path(__file__).resolve().parent / "patch_agent.py"), str(embedded_agent)], capture_output=True, text=True); print("[patch_agent]", _r.stdout, _r.stderr, file=_sys.stderr); _r.check_returncode()'
         )
         if anchor not in s:
             raise SystemExit("anchor shutil.copy(agent, embedded_agent) not found in embed-agent.py")
         s = s.replace(anchor, hook, 1)
         p.write_text(s)
-        print("hooked patch_agent.py into embed-agent.py (linux/android branch)")
+        print("hooked patch_agent.py into embed-agent.py (linux/android branch, __file__-relative, check=True)")
         PY
 
     - name: Configure

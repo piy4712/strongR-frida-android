@@ -133,6 +133,72 @@ def main():
          f'g_thread_new ("{js_loop_rand}",'),
     ])
 
+    # ---- 0006b: agent .so thread names (land in TARGET app's
+    #      /proc/self/task/*/comm — RASP matches "frida-agent" AND bare "frida").
+    #      - "frida-agent-emulated" (agent.vala:1432) — 1x
+    #      - "frida-eternal-agent"  (agent.vala:366/562/670) — 3x, runs inside app
+    #      Must patch at source so the built agent .so doesn't carry them. ----
+    agent_vala = core / "lib" / "agent" / "agent.vala"
+    emu_rand = rand(12, string.ascii_lowercase)
+    eternal_rand = rand(14, string.ascii_lowercase)
+    # replace_all the 3x eternal-agent first (patch_file only does 1), then
+    # the single emulated via patch_file (asserts presence -> fail-fast).
+    av = agent_vala.read_text(encoding="utf-8")
+    n = av.count('"frida-eternal-agent"')
+    if n == 0:
+        fail('target not found in agent.vala: "frida-eternal-agent"')
+    av = av.replace('"frida-eternal-agent"', f'"{eternal_rand}"')
+    agent_vala.write_text(av, encoding="utf-8")
+    print(f"[strongr_port] replaced {n}x frida-eternal-agent -> {eternal_rand} in agent.vala")
+    patch_file(agent_vala, [
+        ('new Thread<void> ("frida-agent-emulated",',
+         f'new Thread<void> ("{emu_rand}",'),
+    ])
+
+    # ---- 0006c: frida-agent-container thread name (src/, host binary).
+    #      Defensive: RASP scans the app, not the server, but the string is
+    #      a literal "frida-agent" match and costs nothing to randomize. -----
+    ac = core / "src" / "agent-container.vala"
+    cont_rand = rand(12, string.ascii_lowercase)
+    patch_file(ac, [
+        ('new Thread<bool> ("frida-agent-container",',
+         f'new Thread<bool> ("{cont_rand}",'),
+    ])
+
+    # ---- 0006d: host-session-service.vala error message containing
+    #      "frida-agent" (host binary, defensive). --------------------------
+    hss = core / "src" / "host-session-service.vala"
+    if hss.exists():
+        hs = hss.read_text(encoding="utf-8")
+        old_msg = 'either refused to load frida-agent, '
+        if old_msg in hs:
+            hs = hs.replace(old_msg, 'either refused to load agent, ', 1)
+            hss.write_text(hs, encoding="utf-8")
+            print(f"[strongr_port] scrubbed 'frida-agent' from {hss} error msg")
+        else:
+            print(f"[strongr_port] {hss} msg already scrubbed / moved")
+
+    # ---- 0006e: frida-main-loop thread name (src/frida-glue.c) — server
+    #      process, but RASP matches bare "frida" so scrub defensively. ----
+    glue = core / "src" / "frida-glue.c"
+    if glue.exists():
+        main_rand = rand(11, string.ascii_lowercase)
+        patch_file(glue, [
+            ('g_thread_new ("frida-main-loop",',
+             f'g_thread_new ("{main_rand}",'),
+        ])
+
+    # ---- 0006f: frida-gadget thread name (lib/gadget/gadget-glue.c) — only
+    #      in the gadget binary, not used by server injection. Scrub anyway
+    #      in case the gadget is loaded into the app later. ----------------
+    gglue = core / "lib" / "gadget" / "gadget-glue.c"
+    if gglue.exists():
+        gad_rand = rand(11, string.ascii_lowercase)
+        patch_file(gglue, [
+            ('g_thread_new ("frida-gadget",',
+             f'g_thread_new ("{gad_rand}",'),
+        ])
+
     # ---- 0008: droidy Unexpected command -> tolerate ----------------------
     droidy = core / "src" / "droidy" / "droidy-client.vala"
     if droidy.exists():
