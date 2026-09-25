@@ -114,19 +114,16 @@ def main():
          f'name = "{agent_prefix}-arm64.so";'),
     ])
 
-    # ---- 0005: frida_agent_main entrypoint -> "main" ----------------------
-    # Keep the symbol name consistent between caller (host-session) and the
-    # agent .so itself (agent-container). The lief step below renames the
-    # exported symbol in the built .so; here we change the lookup name.
-    patch_file(lhs, [
-        ('string entrypoint = "frida_agent_main";',
-         'string entrypoint = "main";'),
-    ])
-    ac = core / "src" / "agent-container.vala"
-    patch_file(ac, [
-        ('container.module.symbol ("frida_agent_main", out main_func_symbol)',
-         'container.module.symbol ("main", out main_func_symbol)'),
-    ])
+    # ---- 0005: frida_agent_main entrypoint --------------------------------
+    # NOTE: We do NOT rename the entrypoint lookup. strongR-frida original
+    # renamed frida_agent_main -> main in BOTH the caller (host-session) and
+    # the agent .so symbol table (via lief). But lief patching of the embedded
+    # agent .so is not wired up in Frida 17's build (agent is packed into a
+    # resource blob before we can intercept), so renaming only the caller side
+    # would make server.symbol("main") fail with "undefined symbol: main".
+    # RASP dictionary does not contain "frida_agent_main" (only "frida-agent"
+    # the filename), so leaving the symbol is safe from detection.
+    # The agent FILENAME (memfd name) is handled by patch 0004 above.
 
     # ---- 0006: gum-js-loop thread name -> random --------------------------
     sched = gum / "bindings" / "gumjs" / "gumscriptscheduler.c"

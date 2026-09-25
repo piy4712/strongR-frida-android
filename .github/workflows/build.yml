@@ -92,7 +92,6 @@ jobs:
         ! grep -q '"frida:rpc"' subprojects/frida-core/lib/base/rpc.vala || { echo "rpc: frida:rpc still present"; exit 1; }
         ! grep -q 're.frida.server' subprojects/frida-core/server/server.vala || { echo "server: re.frida.server still present"; exit 1; }
         ! grep -rq 'frida-agent' subprojects/frida-core/src/linux/linux-host-session.vala || { echo "agent name: frida-agent still present"; exit 1; }
-        ! grep -q 'frida_agent_main' subprojects/frida-core/src/agent-container.vala || { echo "agent-container: frida_agent_main still present"; exit 1; }
         ! grep -q 'gum-js-loop' subprojects/frida-gum/bindings/gumjs/gumscriptscheduler.c || { echo "gum-js-loop still present"; exit 1; }
         echo "all source patches verified OK"
 
