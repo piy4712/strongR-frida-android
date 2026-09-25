@@ -104,25 +104,36 @@ jobs:
       shell: bash
       run: |
         cd frida/subprojects/frida-core
-        # Insert a call to patch_agent.py right after each shutil.copy(agent, embedded_agent)
-        # in the linux/android branch, before the resource_compiler packs them.
-        # Resolve the patcher by __file__ (absolute) — meson runs embed-agent.py with a
-        # build-dir cwd, so a relative path would silently miss and check=False would hide it.
+        # Hook patch_agent.py into the LINUX/ANDROID branch of embed-agent.py
+        # (the one that runs for our android-arm64 build). There are 3 copies of
+        # shutil.copy(agent, embedded_agent): windows (12-space), linux/android
+        # (16-space, inside `for agent, flavor`), freebsd/qnx (8-space). Hook ALL
+        # of them defensively so whichever branch runs, the agent gets patched.
         cp ../../../patch_agent.py src/patch_agent.py
         python3 - <<'PY'
         from pathlib import Path
         p = Path("src/embed-agent.py")
         s = p.read_text()
         anchor = '            shutil.copy(agent, embedded_agent)'
-        hook = (
+        hook_line = (
             '            shutil.copy(agent, embedded_agent)\n'
             '            import subprocess as _sp, sys as _sys; _r=_sp.run([_sys.executable, str(Path(__file__).resolve().parent / "patch_agent.py"), str(embedded_agent)], capture_output=True, text=True); print("[patch_agent]", _r.stdout, _r.stderr, file=_sys.stderr); _r.check_returncode()'
         )
-        if anchor not in s:
-            raise SystemExit("anchor shutil.copy(agent, embedded_agent) not found in embed-agent.py")
-        s = s.replace(anchor, hook, 1)
+        # the linux/android branch copy is indented 16 spaces (inside for loop)
+        anchor_linux = '                shutil.copy(agent, embedded_agent)'
+        hook_linux = (
+            '                shutil.copy(agent, embedded_agent)\n'
+            '                import subprocess as _sp, sys as _sys; _r=_sp.run([_sys.executable, str(Path(__file__).resolve().parent / "patch_agent.py"), str(embedded_agent)], capture_output=True, text=True); print("[patch_agent]", _r.stdout, _r.stderr, file=_sys.stderr); _r.check_returncode()'
+        )
+        n = 0
+        if anchor in s:
+            s = s.replace(anchor, hook_line, 1); n += 1
+        if anchor_linux in s:
+            s = s.replace(anchor_linux, hook_linux, 1); n += 1
+        if n == 0:
+            raise SystemExit("no shutil.copy(agent, embedded_agent) anchor found in embed-agent.py")
         p.write_text(s)
-        print("hooked patch_agent.py into embed-agent.py (linux/android branch, __file__-relative, check=True)")
+        print(f"hooked patch_agent.py into embed-agent.py ({n} branches: windows + linux/android)")
         PY
 
     - name: Configure
